@@ -1,0 +1,17 @@
+# PlatformIO build artefacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VS Code settings (optional — remove if you want to share)
+.vscode/
+
+# Secret credentials — NEVER commit this file
+secrets.ini
+
+# macOS
+.DS_Store
+
+# Python byte-code (PlatformIO scripts)
+__pycache__/
+*.pyc

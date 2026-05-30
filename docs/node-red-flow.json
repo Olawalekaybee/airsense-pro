@@ -1,0 +1,118 @@
+[
+  {
+    "id": "mqtt-in-telemetry",
+    "type": "mqtt in",
+    "name": "AirSense telemetry",
+    "topic": "airsense/room1/telemetry",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "hivemq-broker",
+    "wires": [["json-parse"]]
+  },
+  {
+    "id": "json-parse",
+    "type": "json",
+    "name": "Parse JSON",
+    "wires": [
+      ["gauge-temp", "gauge-hum", "gauge-eco2", "gauge-tvoc", "gauge-aqi",
+       "chart-eco2", "alert-check"]
+    ]
+  },
+  {
+    "id": "gauge-temp",
+    "type": "ui_gauge",
+    "name": "Temperature",
+    "label": "Temperature (°C)",
+    "min": 0, "max": 50,
+    "colorLow": "#185FA5", "colorMid": "#1D9E75", "colorHi": "#E24B4A",
+    "lowThreshold": 0, "highThreshold": THRESHOLD_TEMP_C,
+    "topic": "temperature",
+    "wires": []
+  },
+  {
+    "id": "gauge-hum",
+    "type": "ui_gauge",
+    "name": "Humidity",
+    "label": "Humidity (%RH)",
+    "min": 0, "max": 100,
+    "colorLow": "#185FA5", "colorMid": "#1D9E75", "colorHi": "#E24B4A",
+    "lowThreshold": 0, "highThreshold": 80,
+    "topic": "humidity",
+    "wires": []
+  },
+  {
+    "id": "gauge-eco2",
+    "type": "ui_gauge",
+    "name": "eCO2",
+    "label": "eCO₂ (ppm)",
+    "min": 400, "max": 2000,
+    "colorLow": "#1D9E75", "colorMid": "#BA7517", "colorHi": "#E24B4A",
+    "lowThreshold": 400, "highThreshold": 1000,
+    "topic": "eco2_ppm",
+    "wires": []
+  },
+  {
+    "id": "gauge-tvoc",
+    "type": "ui_gauge",
+    "name": "TVOC",
+    "label": "TVOC (ppb)",
+    "min": 0, "max": 1000,
+    "colorLow": "#1D9E75", "colorMid": "#BA7517", "colorHi": "#E24B4A",
+    "lowThreshold": 0, "highThreshold": 500,
+    "topic": "tvoc_ppb",
+    "wires": []
+  },
+  {
+    "id": "gauge-aqi",
+    "type": "ui_text",
+    "name": "AQI label",
+    "label": "Air Quality",
+    "topic": "aqi_label",
+    "wires": []
+  },
+  {
+    "id": "chart-eco2",
+    "type": "ui_chart",
+    "name": "eCO₂ history",
+    "label": "eCO₂ over time",
+    "chartType": "line",
+    "legend": "false",
+    "xformat": "HH:mm",
+    "interpolate": "linear",
+    "nodata": "",
+    "dot": false,
+    "ymin": "400", "ymax": "2000",
+    "topic": "eco2_ppm",
+    "wires": []
+  },
+  {
+    "id": "alert-check",
+    "type": "switch",
+    "name": "Alert?",
+    "property": "payload.alert",
+    "rules": [{ "t": "true" }],
+    "wires": [["notify-alert"]]
+  },
+  {
+    "id": "notify-alert",
+    "type": "ui_notification",
+    "name": "Alert notification",
+    "position": "top right",
+    "displayTime": "5",
+    "wires": []
+  },
+  {
+    "id": "hivemq-broker",
+    "type": "mqtt-broker",
+    "name": "HiveMQ Cloud",
+    "broker": "your-cluster.hivemq.cloud",
+    "port": "8883",
+    "tls": true,
+    "clientid": "node-red-airsense",
+    "keepalive": "60",
+    "credentials": {
+      "user": "your_hivemq_username",
+      "password": "your_hivemq_password"
+    }
+  }
+]
