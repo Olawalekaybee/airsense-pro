@@ -1,6 +1,7 @@
 // =============================================================================
-//  ui_manager.cpp — LVGL 4-screen touch UI
-//  Dashboard | History | Settings | Alerts
+//  ui_manager.cpp — LVGL 8 four-screen touch UI
+//  Screens: Dashboard | History | Settings | Alerts
+//  Navigation: bottom nav bar, tap to switch
 // =============================================================================
 
 #include "ui_manager.h"
@@ -10,7 +11,7 @@
 #include "telemetry.h"
 
 // ---------------------------------------------------------------------------
-// Screens
+// Screen objects
 // ---------------------------------------------------------------------------
 static lv_obj_t* scr_dashboard;
 static lv_obj_t* scr_history;
@@ -18,7 +19,7 @@ static lv_obj_t* scr_settings;
 static lv_obj_t* scr_alerts;
 
 // ---------------------------------------------------------------------------
-// Dashboard widgets (updated by ui_updateTelemetry)
+// Dashboard live widgets
 // ---------------------------------------------------------------------------
 static lv_obj_t* arc_aqi;
 static lv_obj_t* lbl_aqi_val;
@@ -30,35 +31,43 @@ static lv_obj_t* lbl_hum;
 static lv_obj_t* lbl_status;
 static lv_obj_t* lbl_last_update;
 
-// Alert overlay (shown on top of any screen)
+// Alert overlay (floats above all screens via lv_layer_top)
 static lv_obj_t* alert_overlay;
 static lv_obj_t* lbl_alert_msg;
 
-// Alert log list (on Alerts screen)
+// Alert log list
 static lv_obj_t* alert_list;
 
 // ---------------------------------------------------------------------------
-// Colour helpers
+// Helpers
 // ---------------------------------------------------------------------------
 static lv_color_t aqiColor(uint8_t aqi) {
     switch (aqi) {
-        case 1: return lv_color_make(0x1D, 0x9E, 0x75);  // teal  — Excellent
-        case 2: return lv_color_make(0x63, 0x99, 0x22);  // green — Good
-        case 3: return lv_color_make(0xBA, 0x75, 0x17);  // amber — Moderate
-        case 4: return lv_color_make(0xD8, 0x5A, 0x30);  // coral — Poor
-        case 5: return lv_color_make(0xE2, 0x4B, 0x4A);  // red   — Unhealthy
-        default:return lv_color_make(0x88, 0x87, 0x80);  // grey  — Unknown
+        case 1:  return lv_color_make(0x1D, 0x9E, 0x75);
+        case 2:  return lv_color_make(0x63, 0x99, 0x22);
+        case 3:  return lv_color_make(0xBA, 0x75, 0x17);
+        case 4:  return lv_color_make(0xD8, 0x5A, 0x30);
+        case 5:  return lv_color_make(0xE2, 0x4B, 0x4A);
+        default: return lv_color_make(0x88, 0x87, 0x80);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Nav bar (shared across all screens)
+// Nav bar — shared, appended to each screen
 // ---------------------------------------------------------------------------
 static void makeNavBar(lv_obj_t* parent, int activeIdx) {
-    const char* labels[] = { LV_SYMBOL_HOME " Dashboard",
-                              LV_SYMBOL_CHART " History",
-                              LV_SYMBOL_SETTINGS " Settings",
-                              LV_SYMBOL_WARNING " Alerts" };
+    // LV_SYMBOL_CHART does not exist in LVGL 8 — use valid symbols only
+    const char* labels[4] = {
+        LV_SYMBOL_HOME    " Dashboard",
+        LV_SYMBOL_LIST    " History",
+        LV_SYMBOL_SETTINGS " Settings",
+        LV_SYMBOL_WARNING " Alerts"
+    };
+
+    lv_obj_t* screens[4] = {
+        scr_dashboard, scr_history, scr_settings, scr_alerts
+    };
+
     lv_obj_t* nav = lv_obj_create(parent);
     lv_obj_set_size(nav, DISPLAY_WIDTH, 52);
     lv_obj_align(nav, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -66,17 +75,16 @@ static void makeNavBar(lv_obj_t* parent, int activeIdx) {
     lv_obj_set_style_border_width(nav, 0, 0);
     lv_obj_set_style_pad_all(nav, 4, 0);
     lv_obj_set_flex_flow(nav, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(nav, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    lv_obj_t* screens[] = { scr_dashboard, scr_history, scr_settings, scr_alerts };
+    lv_obj_set_flex_align(nav, LV_FLEX_ALIGN_SPACE_EVENLY,
+                               LV_FLEX_ALIGN_CENTER,
+                               LV_FLEX_ALIGN_CENTER);
 
     for (int i = 0; i < 4; i++) {
         lv_obj_t* btn = lv_btn_create(nav);
         lv_obj_set_size(btn, 180, 44);
-        bool active = (i == activeIdx);
-        lv_obj_set_style_bg_color(btn, active
-            ? lv_color_make(0x53, 0x4A, 0xB7)
-            : lv_color_make(0x44, 0x44, 0x41), 0);
+        lv_obj_set_style_bg_color(btn,
+            (i == activeIdx) ? lv_color_make(0x53, 0x4A, 0xB7)
+                             : lv_color_make(0x44, 0x44, 0x41), 0);
         lv_obj_set_style_border_width(btn, 0, 0);
         lv_obj_set_style_radius(btn, 8, 0);
 
@@ -86,7 +94,6 @@ static void makeNavBar(lv_obj_t* parent, int activeIdx) {
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_center(lbl);
 
-        // Capture screen pointer for the click handler
         lv_obj_t* targetScr = screens[i];
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             lv_obj_t* scr = (lv_obj_t*)lv_event_get_user_data(e);
@@ -96,13 +103,12 @@ static void makeNavBar(lv_obj_t* parent, int activeIdx) {
 }
 
 // ---------------------------------------------------------------------------
-// Build Dashboard screen
+// Dashboard screen
 // ---------------------------------------------------------------------------
 static void buildDashboard() {
     scr_dashboard = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr_dashboard, lv_color_make(0x1A, 0x1A, 0x18), 0);
 
-    // Title bar
     lv_obj_t* title = lv_label_create(scr_dashboard);
     lv_label_set_text(title, "AirSense Pro");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
@@ -115,7 +121,7 @@ static void buildDashboard() {
     lv_obj_set_style_text_color(lbl_status, lv_color_make(0x88, 0x87, 0x80), 0);
     lv_obj_align(lbl_status, LV_ALIGN_TOP_RIGHT, -16, 16);
 
-    // AQI arc gauge (centre)
+    // AQI arc gauge
     arc_aqi = lv_arc_create(scr_dashboard);
     lv_obj_set_size(arc_aqi, 220, 220);
     lv_arc_set_range(arc_aqi, 1, 5);
@@ -125,8 +131,8 @@ static void buildDashboard() {
     lv_obj_set_style_arc_width(arc_aqi, 18, LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc_aqi, lv_color_make(0x2C, 0x2C, 0x2A), LV_PART_MAIN);
     lv_obj_remove_style(arc_aqi, nullptr, LV_PART_KNOB);
+    lv_obj_clear_flag(arc_aqi, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_align(arc_aqi, LV_ALIGN_CENTER, 0, -30);
-    lv_obj_clear_flag(arc_aqi, LV_OBJ_FLAG_CLICKABLE);  // read-only
 
     lbl_aqi_val = lv_label_create(scr_dashboard);
     lv_label_set_text(lbl_aqi_val, "--");
@@ -140,12 +146,17 @@ static void buildDashboard() {
     lv_obj_set_style_text_color(lbl_aqi_text, lv_color_make(0x88, 0x87, 0x80), 0);
     lv_obj_align_to(lbl_aqi_text, arc_aqi, LV_ALIGN_CENTER, 0, 22);
 
-    // Metric tiles row (bottom half)
-    struct { lv_obj_t** lbl; const char* title; lv_color_t col; } tiles[] = {
-        { &lbl_eco2, "eCO\u2082 (ppm)",  lv_color_make(0x53, 0x4A, 0xB7) },
-        { &lbl_tvoc, "TVOC (ppb)",        lv_color_make(0x0F, 0x6E, 0x56) },
-        { &lbl_temp, "Temp (\u00b0C)",    lv_color_make(0x99, 0x3C, 0x1D) },
-        { &lbl_hum,  "Humidity (%)",      lv_color_make(0x18, 0x5F, 0xA5) },
+    // Metric tiles
+    struct TileInfo {
+        lv_obj_t** lbl;
+        const char* title;
+        lv_color_t  col;
+    };
+    TileInfo tiles[4] = {
+        { &lbl_eco2, "eCO2 (ppm)",   lv_color_make(0x53, 0x4A, 0xB7) },
+        { &lbl_tvoc, "TVOC (ppb)",   lv_color_make(0x0F, 0x6E, 0x56) },
+        { &lbl_temp, "Temp (C)",      lv_color_make(0x99, 0x3C, 0x1D) },
+        { &lbl_hum,  "Humidity (%)", lv_color_make(0x18, 0x5F, 0xA5) },
     };
 
     int tileW = (DISPLAY_WIDTH - 80) / 4;
@@ -183,14 +194,14 @@ static void buildDashboard() {
 }
 
 // ---------------------------------------------------------------------------
-// Build History screen (placeholder — add lv_chart for real history)
+// History screen
 // ---------------------------------------------------------------------------
 static void buildHistory() {
     scr_history = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr_history, lv_color_make(0x1A, 0x1A, 0x18), 0);
 
     lv_obj_t* lbl = lv_label_create(scr_history);
-    lv_label_set_text(lbl, "History — last 60 readings\n(lv_chart goes here)");
+    lv_label_set_text(lbl, "History — last 60 readings");
     lv_obj_set_style_text_color(lbl, lv_color_make(0xCE, 0xCB, 0xF6), 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -30);
@@ -199,14 +210,14 @@ static void buildHistory() {
 }
 
 // ---------------------------------------------------------------------------
-// Build Settings screen (placeholder — add sliders for thresholds)
+// Settings screen
 // ---------------------------------------------------------------------------
 static void buildSettings() {
     scr_settings = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr_settings, lv_color_make(0x1A, 0x1A, 0x18), 0);
 
     lv_obj_t* lbl = lv_label_create(scr_settings);
-    lv_label_set_text(lbl, "Settings\n(threshold sliders go here)");
+    lv_label_set_text(lbl, "Settings");
     lv_obj_set_style_text_color(lbl, lv_color_make(0xCE, 0xCB, 0xF6), 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -30);
@@ -215,7 +226,7 @@ static void buildSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Build Alerts screen
+// Alerts screen
 // ---------------------------------------------------------------------------
 static void buildAlerts() {
     scr_alerts = lv_obj_create(nullptr);
@@ -236,11 +247,9 @@ static void buildAlerts() {
 }
 
 // ---------------------------------------------------------------------------
-// Alert overlay (built once, hidden by default)
+// Alert overlay
 // ---------------------------------------------------------------------------
 static void buildAlertOverlay() {
-    // Overlay sits on the active screen — we re-parent it as needed.
-    // Simpler: create it as a child of lv_layer_top() so it floats above all.
     alert_overlay = lv_obj_create(lv_layer_top());
     lv_obj_set_size(alert_overlay, DISPLAY_WIDTH, 60);
     lv_obj_align(alert_overlay, LV_ALIGN_TOP_MID, 0, 0);
@@ -263,16 +272,14 @@ void ui_init() {
     buildSettings();
     buildAlerts();
     buildAlertOverlay();
-
     lv_scr_load(scr_dashboard);
-    Serial.println("[UI] Screens created — Dashboard loaded");
+    Serial.println("[UI] Ready — Dashboard loaded");
 }
 
 // ---------------------------------------------------------------------------
 void ui_updateTelemetry(const TelemetryData* data) {
     if (!data) return;
 
-    // --- Dashboard AQI arc ---
     lv_arc_set_value(arc_aqi, data->aqi);
     lv_obj_set_style_arc_color(arc_aqi, aqiColor(data->aqi), LV_PART_INDICATOR);
 
@@ -281,7 +288,6 @@ void ui_updateTelemetry(const TelemetryData* data) {
     lv_label_set_text(lbl_aqi_val, buf);
     lv_label_set_text(lbl_aqi_text, data->aqiLabel());
 
-    // --- Metric tiles ---
     snprintf(buf, sizeof(buf), "%d", data->eco2_ppm);
     lv_label_set_text(lbl_eco2, buf);
 
@@ -294,22 +300,19 @@ void ui_updateTelemetry(const TelemetryData* data) {
     snprintf(buf, sizeof(buf), "%.1f", data->humidity);
     lv_label_set_text(lbl_hum, buf);
 
-    // --- Status + timestamp ---
     lv_label_set_text(lbl_status, LV_SYMBOL_WIFI " Live");
+
     snprintf(buf, sizeof(buf), "Updated %lus ago", data->timestamp_ms / 1000);
     lv_label_set_text(lbl_last_update, buf);
 
-    // --- Alert overlay ---
     if (data->hasAlert()) {
-        const char* alertType = data->alert_eco2 ? "High eCO\u2082"
+        const char* alertType = data->alert_eco2 ? "High eCO2"
                               : data->alert_tvoc  ? "High TVOC"
                               : data->alert_temp  ? "High temperature"
                               :                     "High humidity";
-        snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " Alert: %s", alertType);
+        snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " %s", alertType);
         lv_label_set_text(lbl_alert_msg, buf);
         lv_obj_clear_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
-
-        // Log to alerts screen
         lv_list_add_text(alert_list, buf);
     } else {
         lv_obj_add_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
