@@ -1,3 +1,9 @@
+---
+noteId: "95860c61600111f1b9c8ddd1a9ff75b9"
+tags: []
+
+---
+
 # Wiring reference — AirSense Pro
 
 ## Nano ESP32 → ENS160 + AHT21 (I²C)

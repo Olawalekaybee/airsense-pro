@@ -1,3 +1,9 @@
+---
+noteId: "95860c60600111f1b9c8ddd1a9ff75b9"
+tags: []
+
+---
+
 # AirSense Pro
 
 **Dual-node IoT air quality monitor** built on Arduino Nano ESP32 + 7" ESP32-S3 CYD display, using PlatformIO, FreeRTOS, MQTT, LVGL, and OTA firmware updates.
