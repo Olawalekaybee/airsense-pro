@@ -1,15 +1,13 @@
 // =============================================================================
-//  display_driver.cpp — LovyanGFX + LVGL 8 for Sunton ESP32-8048S070 (7" 800x480)
+//  display_driver.cpp — LovyanGFX + LVGL 9 for Sunton ESP32-8048S070 (7" 800x480)
 //
-//  Config sourced from confirmed working reference:
-//  https://www.haraldkreuzer.net/en/news/getting-started-sunton-esp32-s3-7-inch-display-lovyangfx-and-lvgl
-//
-//  Key fixes vs previous attempts:
-//  - freq_write = 12000000 (not 14MHz or 8MHz)
-//  - hsync_back_porch = 43 (not 16)
-//  - vsync_back_porch = 12 (not 10)
-//  - pclk_idle_high = 1 (replaces pclk_active_neg)
-//  - Touch handled by LovyanGFX Touch_GT911 (no bb_captouch needed)
+//  LVGL 9 API changes from LVGL 8:
+//  - lv_disp_drv_t / lv_disp_drv_register()  → lv_display_create()
+//  - lv_disp_draw_buf_t / lv_disp_draw_buf_init() → lv_display_set_buffers()
+//  - lv_display_set_flush_cb() instead of flush_cb in drv struct
+//  - flush callback signature: (lv_display_t*, const lv_area_t*, uint8_t*)
+//  - lv_disp_flush_ready(disp) → lv_display_flush_ready(disp)
+//  - lv_tick_set_cb(millis_cb) instead of FreeRTOS timer
 // =============================================================================
 
 #include "display_driver.h"
@@ -51,20 +49,20 @@ public:
             auto cfg = _bus.config();
             cfg.panel = &_panel;
 
-            // Blue B0-B4
+            // Blue B0-B4 → pin_d0 to pin_d4
             cfg.pin_d0  = GPIO_NUM_15;
             cfg.pin_d1  = GPIO_NUM_7;
             cfg.pin_d2  = GPIO_NUM_6;
             cfg.pin_d3  = GPIO_NUM_5;
             cfg.pin_d4  = GPIO_NUM_4;
-            // Green G0-G5
+            // Green G0-G5 → pin_d5 to pin_d10
             cfg.pin_d5  = GPIO_NUM_9;
             cfg.pin_d6  = GPIO_NUM_46;
             cfg.pin_d7  = GPIO_NUM_3;
             cfg.pin_d8  = GPIO_NUM_8;
             cfg.pin_d9  = GPIO_NUM_16;
             cfg.pin_d10 = GPIO_NUM_1;
-            // Red R0-R4
+            // Red R0-R4 → pin_d11 to pin_d15
             cfg.pin_d11 = GPIO_NUM_14;
             cfg.pin_d12 = GPIO_NUM_21;
             cfg.pin_d13 = GPIO_NUM_47;
@@ -99,7 +97,7 @@ public:
         }
         _panel.light(&_bl);
 
-        // --- Touch GT911 via LovyanGFX (no bb_captouch needed) ---
+        // --- Touch GT911 via LovyanGFX ---
         {
             auto cfg = _touch.config();
             cfg.x_min           = 0;
@@ -127,49 +125,56 @@ static LGFX_Sunton7 gfx;
 // Accessor for touch_driver.cpp
 lgfx::LGFX_Device* getGFX() { return &gfx; }
 
-// LVGL draw buffer in PSRAM
-static const size_t       BUF_PIXELS = 800 * 40;
-static lv_color_t*        buf1       = nullptr;
-static lv_disp_draw_buf_t drawBuf;
+// ---------------------------------------------------------------------------
+// LVGL 9 draw buffers — in PSRAM
+// ---------------------------------------------------------------------------
+static const size_t BUF_PIXELS = 800 * 40;
+static lv_color_t*  buf1       = nullptr;
+static lv_color_t*  buf2       = nullptr;
 
-static void lvgl_flush(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
-    uint32_t w = area->x2 - area->x1 + 1;
-    uint32_t h = area->y2 - area->y1 + 1;
+// ---------------------------------------------------------------------------
+// LVGL 9 flush callback — new signature: (lv_display_t*, area, uint8_t*)
+// ---------------------------------------------------------------------------
+static void lvgl_flush(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
+    uint32_t w = lv_area_get_width(area);
+    uint32_t h = lv_area_get_height(area);
     gfx.startWrite();
     gfx.setAddrWindow(area->x1, area->y1, w, h);
-    gfx.writePixels((lgfx::rgb565_t*)color_p, w * h, true);
+    gfx.writePixels((lgfx::rgb565_t*)px_map, w * h, true);
     gfx.endWrite();
-    lv_disp_flush_ready(drv);
+    lv_display_flush_ready(disp);   // LVGL 9: lv_display_flush_ready (not lv_disp_flush_ready)
 }
 
-static void lvgl_tick_cb(TimerHandle_t) {
-    lv_tick_inc(LVGL_TICK_PERIOD_MS);
-}
+// ---------------------------------------------------------------------------
+// LVGL 9 tick — use lv_tick_set_cb(millis_cb) instead of FreeRTOS timer
+// ---------------------------------------------------------------------------
+static uint32_t millis_cb(void) { return (uint32_t)millis(); }
 
+// ---------------------------------------------------------------------------
 void displayDriver_init() {
     gfx.init();
     gfx.setRotation(0);
     gfx.fillScreen(TFT_BLACK);
+    Serial.println("[Display] GFX init done, backlight ON");
 
+    // Allocate draw buffers in PSRAM
     buf1 = (lv_color_t*)heap_caps_malloc(BUF_PIXELS * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-    if (!buf1) {
-        buf1 = (lv_color_t*)malloc(BUF_PIXELS * sizeof(lv_color_t));
-        Serial.println("[Display] Warning: using DRAM buffer");
+    buf2 = (lv_color_t*)heap_caps_malloc(BUF_PIXELS * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    if (!buf1 || !buf2) {
+        Serial.println("[Display] PSRAM alloc failed — using DRAM");
+        static lv_color_t fb1[800 * 10], fb2[800 * 10];
+        buf1 = fb1; buf2 = fb2;
     }
 
-    lv_disp_draw_buf_init(&drawBuf, buf1, nullptr, BUF_PIXELS);
+    // LVGL 9: lv_tick_set_cb replaces the FreeRTOS timer approach
+    lv_tick_set_cb(millis_cb);
 
-    static lv_disp_drv_t dispDrv;
-    lv_disp_drv_init(&dispDrv);
-    dispDrv.hor_res  = 800;
-    dispDrv.ver_res  = 480;
-    dispDrv.flush_cb = lvgl_flush;
-    dispDrv.draw_buf = &drawBuf;
-    lv_disp_drv_register(&dispDrv);
+    // LVGL 9: lv_display_create + lv_display_set_buffers
+    lv_display_t* disp = lv_display_create(800, 480);
+    lv_display_set_flush_cb(disp, lvgl_flush);
+    lv_display_set_buffers(disp, buf1, buf2,
+                           BUF_PIXELS * sizeof(lv_color_t),
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-    TimerHandle_t t = xTimerCreate("lvgl_tick",
-        pdMS_TO_TICKS(LVGL_TICK_PERIOD_MS), pdTRUE, nullptr, lvgl_tick_cb);
-    xTimerStart(t, 0);
-
-    Serial.println("[Display] Ready (800x480)");
+    Serial.println("[Display] LVGL 9 ready (800x480)");
 }

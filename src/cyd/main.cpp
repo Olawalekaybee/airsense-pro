@@ -1,16 +1,8 @@
 // =============================================================================
-//  AirSense Pro — CYD 7" Display Node
-//  Firmware entry point: Wi-Fi, LVGL init, FreeRTOS tasks.
+//  AirSense Pro — CYD 7" Display Node  (LVGL 9)
 //
-//  Tasks:
-//    MqttTask    — subscribes to airsense/room1/telemetry, pushes parsed
-//                  TelemetryData onto xDisplayQueue
-//    DisplayTask — consumes queue, updates LVGL widgets thread-safely
-//    OtaTask     — ArduinoOTA.handle() in a low-priority loop
-//
-//  Touch: GT911 capacitive controller, I²C address 0x5D or 0x14.
-//         LVGL indev driver polls the controller and maps touch events to
-//         screen presses, driving the 4-screen navigation (tap to switch).
+//  LVGL 9 change: lv_timer_handler() is unchanged.
+//  lv_init() must be called before displayDriver_init().
 // =============================================================================
 
 #include <Arduino.h>
@@ -24,15 +16,12 @@
 #include "config.h"
 #include "telemetry.h"
 #include "OtaManager.h"
-#include "display_driver.h"   // LovyanGFX + LVGL flush/tick callbacks
-#include "touch_driver.h"     // GT911 read callback for LVGL indev
-#include "ui/ui_manager.h"    // Screen definitions (Dashboard, History, etc.)
+#include "display_driver.h"
+#include "touch_driver.h"
+#include "ui/ui_manager.h"
 #include "mqtt_task_cyd.h"
 
-// Shared queue — MqttTask produces, DisplayTask consumes
-QueueHandle_t xDisplayQueue;
-
-// LVGL mutex — must be held before any lv_* call outside DisplayTask
+QueueHandle_t    xDisplayQueue;
 SemaphoreHandle_t xLvglMutex;
 
 // --------------------------------------------------------------------------
@@ -56,21 +45,17 @@ static void wifiConnect() {
 static void displayTask(void* param) {
     TelemetryData data;
     for (;;) {
-        // Update LVGL tick — must be called regularly even without new data
         if (xSemaphoreTake(xLvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            lv_timer_handler();
+            lv_timer_handler();   // same in LVGL 9
             xSemaphoreGive(xLvglMutex);
         }
-
-        // Check for new telemetry (non-blocking)
         if (xQueueReceive(xDisplayQueue, &data, 0) == pdTRUE) {
             if (xSemaphoreTake(xLvglMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                 ui_updateTelemetry(&data);
                 xSemaphoreGive(xLvglMutex);
             }
         }
-
-        vTaskDelay(pdMS_TO_TICKS(5));   // ~200 Hz LVGL refresh ceiling
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -83,24 +68,21 @@ void setup() {
     wifiConnect();
     OtaManager::begin();
 
-    // ---- LVGL + display driver ----
+    // LVGL 9: lv_init() first, then display + touch drivers
     lv_init();
-    displayDriver_init();  // LovyanGFX setup + LVGL flush callback
-    touchDriver_init();    // GT911 I²C setup + LVGL indev registration
+    displayDriver_init();
+    touchDriver_init();
 
     xLvglMutex = xSemaphoreCreateMutex();
     configASSERT(xLvglMutex);
 
-    // ---- Build UI screens ----
-    ui_init();             // creates Dashboard, History, Settings, Alerts screens
+    ui_init();
 
-    // ---- Inter-task queue ----
     xDisplayQueue = xQueueCreate(QUEUE_SIZE, sizeof(TelemetryData));
     configASSERT(xDisplayQueue);
 
-    // ---- Launch tasks ----
-    xTaskCreate(displayTask,   "DisplayTask", STACK_DISPLAY, nullptr, PRIO_DISPLAY, nullptr);
-    xTaskCreate(mqttTaskCYD,   "MqttTask",   STACK_MQTT,    nullptr, PRIO_MQTT,    nullptr);
+    xTaskCreate(displayTask, "DisplayTask", STACK_DISPLAY, nullptr, PRIO_DISPLAY, nullptr);
+    xTaskCreate(mqttTaskCYD, "MqttTask",   STACK_MQTT,    nullptr, PRIO_MQTT,    nullptr);
     OtaManager::startTask();
 
     Serial.println("[Main] All tasks started.");

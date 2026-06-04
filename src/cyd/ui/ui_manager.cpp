@@ -1,7 +1,16 @@
 // =============================================================================
-//  ui_manager.cpp — LVGL 8 four-screen touch UI
-//  Screens: Dashboard | History | Settings | Alerts
-//  Navigation: bottom nav bar, tap to switch
+//  ui_manager.cpp — LVGL 9 four-screen touch UI
+//
+//  LVGL 9 API changes from LVGL 8:
+//  - lv_obj_create(nullptr) unchanged for screen creation
+//  - lv_scr_load() / lv_scr_load_anim() unchanged
+//  - lv_layer_top() unchanged
+//  - lv_obj_add_flag / lv_obj_clear_flag unchanged
+//  - lv_list_add_text() → lv_list_add_btn() with label child (list API changed)
+//  - lv_event_get_user_data() unchanged
+//  - Style functions unchanged
+//  - lv_color_make() unchanged
+//  - lv_color_white() unchanged
 // =============================================================================
 
 #include "ui_manager.h"
@@ -39,8 +48,6 @@ static lv_obj_t* lbl_alert_msg;
 static lv_obj_t* alert_list;
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 static lv_color_t aqiColor(uint8_t aqi) {
     switch (aqi) {
         case 1:  return lv_color_make(0x1D, 0x9E, 0x75);
@@ -53,17 +60,15 @@ static lv_color_t aqiColor(uint8_t aqi) {
 }
 
 // ---------------------------------------------------------------------------
-// Nav bar — shared, appended to each screen
+// Nav bar
 // ---------------------------------------------------------------------------
 static void makeNavBar(lv_obj_t* parent, int activeIdx) {
-    // LV_SYMBOL_CHART does not exist in LVGL 8 — use valid symbols only
     const char* labels[4] = {
-        LV_SYMBOL_HOME    " Dashboard",
-        LV_SYMBOL_LIST    " History",
+        LV_SYMBOL_HOME     " Dashboard",
+        LV_SYMBOL_LIST     " History",
         LV_SYMBOL_SETTINGS " Settings",
-        LV_SYMBOL_WARNING " Alerts"
+        LV_SYMBOL_WARNING  " Alerts"
     };
-
     lv_obj_t* screens[4] = {
         scr_dashboard, scr_history, scr_settings, scr_alerts
     };
@@ -121,7 +126,6 @@ static void buildDashboard() {
     lv_obj_set_style_text_color(lbl_status, lv_color_make(0x88, 0x87, 0x80), 0);
     lv_obj_align(lbl_status, LV_ALIGN_TOP_RIGHT, -16, 16);
 
-    // AQI arc gauge
     arc_aqi = lv_arc_create(scr_dashboard);
     lv_obj_set_size(arc_aqi, 220, 220);
     lv_arc_set_range(arc_aqi, 1, 5);
@@ -146,12 +150,7 @@ static void buildDashboard() {
     lv_obj_set_style_text_color(lbl_aqi_text, lv_color_make(0x88, 0x87, 0x80), 0);
     lv_obj_align_to(lbl_aqi_text, arc_aqi, LV_ALIGN_CENTER, 0, 22);
 
-    // Metric tiles
-    struct TileInfo {
-        lv_obj_t** lbl;
-        const char* title;
-        lv_color_t  col;
-    };
+    struct TileInfo { lv_obj_t** lbl; const char* title; lv_color_t col; };
     TileInfo tiles[4] = {
         { &lbl_eco2, "eCO2 (ppm)",   lv_color_make(0x53, 0x4A, 0xB7) },
         { &lbl_tvoc, "TVOC (ppb)",   lv_color_make(0x0F, 0x6E, 0x56) },
@@ -313,7 +312,10 @@ void ui_updateTelemetry(const TelemetryData* data) {
         snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " %s", alertType);
         lv_label_set_text(lbl_alert_msg, buf);
         lv_obj_clear_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_list_add_text(alert_list, buf);
+
+        // LVGL 9: lv_list_add_text() removed — use lv_list_add_btn() instead
+        lv_obj_t* item = lv_list_add_btn(alert_list, LV_SYMBOL_WARNING, buf);
+        lv_obj_set_style_text_color(item, lv_color_make(0xEF, 0x9F, 0x27), 0);
     } else {
         lv_obj_add_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
     }
